@@ -405,6 +405,7 @@
 				INFOPLIST_KEY_NSFullDiskAccessUsageDescription = "This app needs full disk access to read browser history files for system monitoring.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs network access to send monitoring data to the server.";
 				INFOPLIST_KEY_NSUSBDeviceUsageDescription = "This app needs USB device access to monitor device connections.";
+				INFOPLIST_KEY_LSUIElement = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -436,6 +437,7 @@
 				INFOPLIST_KEY_NSFullDiskAccessUsageDescription = "This app needs full disk access to read browser history files for system monitoring.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs network access to send monitoring data to the server.";
 				INFOPLIST_KEY_NSUSBDeviceUsageDescription = "This app needs USB device access to monitor device connections.";
+				INFOPLIST_KEY_LSUIElement = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

