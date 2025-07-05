@@ -397,15 +397,14 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMainStoryboardFile = Main;
-				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
-				INFOPLIST_KEY_NSAccessibilityUsageDescription = "This app needs accessibility access to monitor keyboard input for system monitoring purposes.";
-				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "This app needs screen capture access to take screenshots for system monitoring.";
-				INFOPLIST_KEY_NSFullDiskAccessUsageDescription = "This app needs full disk access to read browser history files for system monitoring.";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs network access to send monitoring data to the server.";
-				INFOPLIST_KEY_NSUSBDeviceUsageDescription = "This app needs USB device access to monitor device connections.";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAccessibilityUsageDescription = "This app needs accessibility access to monitor keyboard input for system monitoring purposes.";
+				INFOPLIST_KEY_NSFullDiskAccessUsageDescription = "This app needs full disk access to read browser history files for system monitoring.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs network access to send monitoring data to the server.";
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "This app needs screen capture access to take screenshots for system monitoring.";
+				INFOPLIST_KEY_NSUSBDeviceUsageDescription = "This app needs USB device access to monitor device connections.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -429,15 +428,14 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMainStoryboardFile = Main;
-				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
-				INFOPLIST_KEY_NSAccessibilityUsageDescription = "This app needs accessibility access to monitor keyboard input for system monitoring purposes.";
-				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "This app needs screen capture access to take screenshots for system monitoring.";
-				INFOPLIST_KEY_NSFullDiskAccessUsageDescription = "This app needs full disk access to read browser history files for system monitoring.";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs network access to send monitoring data to the server.";
-				INFOPLIST_KEY_NSUSBDeviceUsageDescription = "This app needs USB device access to monitor device connections.";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAccessibilityUsageDescription = "This app needs accessibility access to monitor keyboard input for system monitoring purposes.";
+				INFOPLIST_KEY_NSFullDiskAccessUsageDescription = "This app needs full disk access to read browser history files for system monitoring.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs network access to send monitoring data to the server.";
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "This app needs screen capture access to take screenshots for system monitoring.";
+				INFOPLIST_KEY_NSUSBDeviceUsageDescription = "This app needs USB device access to monitor device connections.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

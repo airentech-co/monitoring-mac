@@ -124,7 +124,6 @@ func handleKeyDownCallback(
     return Unmanaged.passUnretained(event)
 }
 
-@NSApplicationMain
 class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDelegate {
     
     var storage: UserDefaults!
@@ -289,8 +288,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         // Insert code here to initialize your application
         
-        // Since this is a background app (LSUIElement), ensure it doesn't quit when all windows are closed
-        NSApp.setActivationPolicy(.accessory)
+        print("=== MonitorClient Starting ===")
+        print("App delegate initialized")
+        
+        do {
+            // Since this is a background app (LSUIElement), ensure it doesn't quit when all windows are closed
+            NSApp.setActivationPolicy(.accessory)
+            print("Set activation policy to accessory")
+            
+            // Prevent any windows from being created
+            NSApp.windows.forEach { window in
+                window.close()
+            }
+            print("Closed any existing windows")
+        } catch {
+            print("ERROR during app initialization: \(error)")
+        }
         
         storage = UserDefaults.init(suiteName: "alice.monitors")
 
@@ -380,9 +393,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         NSUserNotificationCenter.default.delegate = self
         
         // Setup status bar menu
-        setupStatusBarMenu()
+        do {
+            setupStatusBarMenu()
+            print("Status bar menu setup completed successfully")
+        } catch {
+            print("ERROR setting up status bar menu: \(error)")
+        }
         
         logSuccess("MonitorClient initialization complete")
+        print("=== MonitorClient Startup Complete ===")
+        print("Status bar icon should be visible in menu bar")
+        print("Check for 🗒️ icon in the top-right menu bar")
+        
+        // Show a test notification to verify app is running
+        let notification = NSUserNotification()
+        notification.title = "MonitorClient Started"
+        notification.informativeText = "App is running in background. Look for 🗒️ icon in menu bar."
+        notification.soundName = NSUserNotificationDefaultSoundName
+        NSUserNotificationCenter.default.deliver(notification)
     }
     
     @objc func sessionDidBecomeActive(notification: Notification) {
@@ -1577,6 +1605,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         return modifiers.isEmpty ? "" : (modifiers.joined(separator: "+") + "+")
     }
 
+    // Prevent window creation for background app
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // Don't show any windows when app is reopened
+        return false
+    }
+    
     func applicationWillTerminate(_ aNotification: Notification) {
         // Clean up the event tap
         if let tap = eventTap {
@@ -2489,8 +2523,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
     // MARK: - Status Bar Menu
     
     private func setupStatusBarMenu() {
+        print("Setting up status bar menu...")
+        
         // Create status bar item
         statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        print("Status bar item created")
         
         if let button = statusBarItem?.button {
             button.title = "🗒️"
@@ -2499,6 +2536,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
             // Add click action for status bar icon
             button.action = #selector(statusBarIconClicked)
             button.target = self
+            print("Status bar button configured")
+        } else {
+            print("ERROR: Could not get status bar button")
         }
         
         // Create menu
