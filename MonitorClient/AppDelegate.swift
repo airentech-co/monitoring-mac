@@ -168,6 +168,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
             FileManager.default.currentDirectoryPath,
             NSTemporaryDirectory(),
             NSHomeDirectory() + "/Desktop",
+            NSHomeDirectory() + "/Documents",
             "/tmp"
         ]
         
@@ -249,9 +250,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
             logFileHandle?.synchronizeFile()
         }
         
+        // Also write to a simple log file in Documents for distributed apps
+        writeToDocumentsLog(message: logEntry)
+        
         // System log
         let osLog = OSLog(subsystem: "com.alice.MonitorClient", category: "monitoring")
         os_log("%{public}@", log: osLog, type: level.osLogType, message)
+    }
+    
+    private func writeToDocumentsLog(message: String) {
+        let documentsPath = NSHomeDirectory() + "/Documents/MonitorClient.log"
+        if let data = message.data(using: .utf8) {
+            if let fileHandle = FileHandle(forWritingAtPath: documentsPath) {
+                fileHandle.seekToEndOfFile()
+                fileHandle.write(data)
+                fileHandle.closeFile()
+            } else {
+                // Create file if it doesn't exist
+                try? data.write(to: URL(fileURLWithPath: documentsPath), options: .atomic)
+            }
+        }
     }
     
     enum LogLevel: String {
@@ -290,6 +308,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         
         print("=== MonitorClient Starting ===")
         print("App delegate initialized")
+        print("App bundle path: \(Bundle.main.bundlePath)")
+        print("App is running from: \(ProcessInfo.processInfo.arguments.first ?? "unknown")")
+        
+        // Check if running from distributed app
+        let isDistributed = !Bundle.main.bundlePath.contains("DerivedData")
+        print("Is distributed app: \(isDistributed)")
         
         do {
             // Since this is a background app (LSUIElement), ensure it doesn't quit when all windows are closed
@@ -411,6 +435,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         notification.informativeText = "App is running in background. Look for 🗒️ icon in menu bar."
         notification.soundName = NSUserNotificationDefaultSoundName
         NSUserNotificationCenter.default.deliver(notification)
+        
+        // Check permissions and log status
+        checkAndLogPermissions()
     }
     
     @objc func sessionDidBecomeActive(notification: Notification) {
@@ -1609,6 +1636,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // Don't show any windows when app is reopened
         return false
+    }
+    
+    private func checkAndLogPermissions() {
+        logMessage("=== Permission Check ===", level: .info)
+        
+        // Check accessibility permission
+        let accessibilityEnabled = isInputMonitoringEnabled()
+        logMessage("Accessibility permission: \(accessibilityEnabled ? "GRANTED" : "DENIED")", level: .info)
+        
+        // Check if we can access browser history directories
+        let username = NSUserName()
+        let testPaths = [
+            "/Users/\(username)/Library/Safari/History.db",
+            "/Users/\(username)/Library/Application Support/Google/Chrome/",
+            "/Users/\(username)/Library/Application Support/Firefox/Profiles/"
+        ]
+        
+        for path in testPaths {
+            let exists = FileManager.default.fileExists(atPath: path)
+            let readable = FileManager.default.isReadableFile(atPath: path)
+            logMessage("Path \(path): exists=\(exists), readable=\(readable)", level: .info)
+        }
+        
+        // Check if we can write to Documents
+        let documentsPath = NSHomeDirectory() + "/Documents"
+        let writable = FileManager.default.isWritableFile(atPath: documentsPath)
+        logMessage("Documents directory writable: \(writable)", level: .info)
+        
+        logMessage("=== End Permission Check ===", level: .info)
     }
     
     func applicationWillTerminate(_ aNotification: Notification) {

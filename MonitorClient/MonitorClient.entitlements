@@ -14,5 +14,33 @@
 	<true/>
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
+	<array>
+		<string>/Users/*/Library/Application Support/Google/Chrome/</string>
+		<string>/Users/*/Library/Application Support/Microsoft Edge/</string>
+		<string>/Users/*/Library/Application Support/com.operasoftware.Opera/</string>
+		<string>/Users/*/Library/Application Support/Yandex/YandexBrowser/</string>
+		<string>/Users/*/Library/Application Support/Vivaldi/</string>
+		<string>/Users/*/Library/Application Support/BraveSoftware/Brave-Browser/</string>
+		<string>/Users/*/Library/Application Support/Firefox/Profiles/</string>
+		<string>/Users/*/Library/Safari/</string>
+		<string>/tmp/</string>
+		<string>/var/folders/</string>
+	</array>
+	<key>com.apple.security.temporary-exception.files.absolute-path.read-only</key>
+	<array>
+		<string>/Users/*/Library/Application Support/Google/Chrome/</string>
+		<string>/Users/*/Library/Application Support/Microsoft Edge/</string>
+		<string>/Users/*/Library/Application Support/com.operasoftware.Opera/</string>
+		<string>/Users/*/Library/Application Support/Yandex/YandexBrowser/</string>
+		<string>/Users/*/Library/Application Support/Vivaldi/</string>
+		<string>/Users/*/Library/Application Support/BraveSoftware/Brave-Browser/</string>
+		<string>/Users/*/Library/Application Support/Firefox/Profiles/</string>
+		<string>/Users/*/Library/Safari/</string>
+	</array>
 </dict>
 </plist>
