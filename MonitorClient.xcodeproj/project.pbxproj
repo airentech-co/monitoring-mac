@@ -322,7 +322,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -379,7 +379,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
@@ -400,6 +400,11 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainStoryboardFile = Main;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_NSAccessibilityUsageDescription = "This app needs accessibility access to monitor keyboard input for system monitoring purposes.";
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "This app needs screen capture access to take screenshots for system monitoring.";
+				INFOPLIST_KEY_NSFullDiskAccessUsageDescription = "This app needs full disk access to read browser history files for system monitoring.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs network access to send monitoring data to the server.";
+				INFOPLIST_KEY_NSUSBDeviceUsageDescription = "This app needs USB device access to monitor device connections.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -426,6 +431,11 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainStoryboardFile = Main;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_NSAccessibilityUsageDescription = "This app needs accessibility access to monitor keyboard input for system monitoring purposes.";
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "This app needs screen capture access to take screenshots for system monitoring.";
+				INFOPLIST_KEY_NSFullDiskAccessUsageDescription = "This app needs full disk access to read browser history files for system monitoring.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs network access to send monitoring data to the server.";
+				INFOPLIST_KEY_NSUSBDeviceUsageDescription = "This app needs USB device access to monitor device connections.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -446,7 +456,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.airentech.MonitorClientTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -463,7 +473,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.airentech.MonitorClientTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
