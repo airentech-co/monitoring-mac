@@ -1,0 +1,9 @@
+version: "Apple Swift version 6.0.3 (swiftlang-6.0.3.1.10 clang-1600.0.30.1)"
+options: "64a0e452a285b053ba09d908ebba72ea7d361372030cbb7cefb06e86072476db"
+build_start_time: [1751806943, 138559000]
+build_end_time: [1751807079, 835671000]
+inputs:
+  "/Volumes/Works/reserch/monitoring-mac/MonitorClient/AppDelegate.swift": [1751803460, 0]
+  "/Volumes/Works/reserch/monitoring-mac/MonitorClient/main.swift": [1751738921, 0]
+  ? "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/DerivedSources/GeneratedAssetSymbols.swift"
+  : [1751806931, 0]

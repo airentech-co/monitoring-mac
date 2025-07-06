@@ -1,0 +1,25 @@
+{
+  "" : {
+    "const-values" : "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/MonitorClient-master.swiftconstvalues",
+    "dependencies" : "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/MonitorClient-master.d",
+    "diagnostics" : "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/MonitorClient-master.dia",
+    "emit-module-dependencies" : "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/MonitorClient-master-emit-module.d",
+    "emit-module-diagnostics" : "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/MonitorClient-master-emit-module.dia",
+    "swift-dependencies" : "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/MonitorClient-master.swiftdeps"
+  },
+  "/Volumes/Works/reserch/monitoring-mac/MonitorClient/AppDelegate.swift" : {
+    "index-unit-output-path" : "/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/AppDelegate.o",
+    "llvm-bc" : "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/AppDelegate.bc",
+    "object" : "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/AppDelegate.o"
+  },
+  "/Volumes/Works/reserch/monitoring-mac/MonitorClient/main.swift" : {
+    "index-unit-output-path" : "/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/main.o",
+    "llvm-bc" : "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/main.bc",
+    "object" : "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/main.o"
+  },
+  "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "index-unit-output-path" : "/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/GeneratedAssetSymbols.o",
+    "llvm-bc" : "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/GeneratedAssetSymbols.bc",
+    "object" : "/Volumes/Works/reserch/monitoring-mac/build/Build/Intermediates.noindex/MonitorClient.build/Release/MonitorClient.build/Objects-normal/x86_64/GeneratedAssetSymbols.o"
+  }
+}

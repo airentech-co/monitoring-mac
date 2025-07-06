@@ -331,6 +331,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         
         storage = UserDefaults.init(suiteName: "alice.monitors")
 
+        // Load settings from file
+        loadSettings()
+
         // Configure server IP if not already set
         if storage.string(forKey: "server-ip") == nil {
             storage.set("192.168.1.45:8924", forKey: "server-ip")
@@ -1638,6 +1641,128 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         return false
     }
     
+    // MARK: - Settings Management
+    
+    private func getSettingsFilePath() -> String {
+        let appSupportPath = NSHomeDirectory() + "/Library/Application Support/MonitorClient"
+        
+        // Create directory if it doesn't exist
+        if !FileManager.default.fileExists(atPath: appSupportPath) {
+            try? FileManager.default.createDirectory(atPath: appSupportPath, withIntermediateDirectories: true, attributes: nil)
+        }
+        
+        return appSupportPath + "/settings.plist"
+    }
+    
+    private func loadSettings() {
+        let settingsPath = getSettingsFilePath()
+        
+        if let settings = NSDictionary(contentsOfFile: settingsPath) {
+            if let serverIP = settings["serverIP"] as? String {
+                // Extract IP from full address if needed
+                let ip = serverIP.contains(":") ? String(serverIP.split(separator: ":")[0]) : serverIP
+                storage.set(ip, forKey: "server-ip")
+                logMessage("Loaded server IP from settings: \(ip)", level: .info)
+            }
+            if let serverPort = settings["serverPort"] as? String {
+                storage.set(serverPort, forKey: "server-port")
+                logMessage("Loaded server port from settings: \(serverPort)", level: .info)
+            }
+        } else {
+            logMessage("No settings file found, using defaults", level: .info)
+        }
+    }
+    
+    private func saveSettings(serverIP: String, serverPort: String) {
+        let settingsPath = getSettingsFilePath()
+        let settings: [String: Any] = [
+            "serverIP": serverIP,
+            "serverPort": serverPort
+        ]
+        
+        if let plistData = try? PropertyListSerialization.data(fromPropertyList: settings, format: .xml, options: 0) {
+            try? plistData.write(to: URL(fileURLWithPath: settingsPath))
+            logMessage("Settings saved to: \(settingsPath)", level: .info)
+        }
+    }
+    
+    @objc private func openSettingsDialog() {
+        let alert = NSAlert()
+        alert.messageText = "MonitorClient Settings"
+        alert.informativeText = "Configure server connection settings"
+        
+        // Create custom view for input fields
+        let customView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 80))
+        
+        // Server IP field
+        let ipLabel = NSTextField(labelWithString: "Server IP:")
+        ipLabel.frame = NSRect(x: 0, y: 50, width: 80, height: 20)
+        customView.addSubview(ipLabel)
+        
+        // Get current server IP (extract from full address if needed)
+        let currentServerAddress = storage.string(forKey: "server-ip") ?? "192.168.1.45:8924"
+        let currentIP = currentServerAddress.contains(":") ? String(currentServerAddress.split(separator: ":")[0]) : currentServerAddress
+        
+        let ipField = NSTextField(frame: NSRect(x: 90, y: 50, width: 200, height: 20))
+        ipField.stringValue = currentIP
+        ipField.placeholderString = "Enter server IP address"
+        customView.addSubview(ipField)
+        
+        // Server Port field
+        let portLabel = NSTextField(labelWithString: "Port:")
+        portLabel.frame = NSRect(x: 0, y: 20, width: 80, height: 20)
+        customView.addSubview(portLabel)
+        
+        let portField = NSTextField(frame: NSRect(x: 90, y: 20, width: 200, height: 20))
+        portField.stringValue = storage.string(forKey: "server-port") ?? "8924"
+        portField.placeholderString = "Enter server port"
+        customView.addSubview(portField)
+        
+        alert.accessoryView = customView
+        
+        // Add buttons
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        
+        // Show dialog
+        let response = alert.runModal()
+        
+        if response == .alertFirstButtonReturn {
+            let serverIP = ipField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let serverPort = portField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // Validate input
+            if serverIP.isEmpty || serverPort.isEmpty {
+                let errorAlert = NSAlert()
+                errorAlert.messageText = "Invalid Settings"
+                errorAlert.informativeText = "Please enter both server IP and port."
+                errorAlert.runModal()
+                return
+            }
+            
+            // Save settings
+            let fullServerAddress = "\(serverIP):\(serverPort)"
+            storage.set(fullServerAddress, forKey: "server-ip")
+            storage.set(serverPort, forKey: "server-port")
+            
+            // Update the global server address for immediate use
+            if let serverAddress = storage.string(forKey: "server-ip") {
+                logMessage("Server address updated to: \(serverAddress)", level: .info)
+            }
+            
+            // Save to file
+            saveSettings(serverIP: serverIP, serverPort: serverPort)
+            
+            logMessage("Settings updated - Server: \(fullServerAddress)", level: .info)
+            
+            // Show confirmation
+            let confirmAlert = NSAlert()
+            confirmAlert.messageText = "Settings Saved"
+            confirmAlert.informativeText = "Server settings have been updated successfully."
+            confirmAlert.runModal()
+        }
+    }
+    
     private func checkAndLogPermissions() {
         logMessage("=== Permission Check ===", level: .info)
         
@@ -2339,6 +2464,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         task.resume()
     }
     
+    @objc private func testSettings() {
+        logMessage("=== Testing Settings ===", level: .info)
+        
+        let settingsPath = getSettingsFilePath()
+        logMessage("Settings file path: \(settingsPath)", level: .info)
+        
+        let fileExists = FileManager.default.fileExists(atPath: settingsPath)
+        logMessage("Settings file exists: \(fileExists)", level: .info)
+        
+        if let settings = NSDictionary(contentsOfFile: settingsPath) {
+            logMessage("Settings loaded: \(settings)", level: .info)
+        } else {
+            logMessage("No settings file found", level: .info)
+        }
+        
+        let currentServerAddress = storage.string(forKey: "server-ip") ?? "Not set"
+        let currentPort = storage.string(forKey: "server-port") ?? "Not set"
+        logMessage("Current server address: \(currentServerAddress)", level: .info)
+        logMessage("Current port: \(currentPort)", level: .info)
+        
+        logMessage("=== End Settings Test ===", level: .info)
+    }
+    
 
     
     // MARK: - NSUserNotificationCenterDelegate
@@ -2689,9 +2837,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSUserNotificationCenterDele
         let testServerItem = NSMenuItem(title: "Test Server Connection", action: #selector(testServerConnectivity), keyEquivalent: "")
         menu.addItem(testServerItem)
         
+        let testSettingsItem = NSMenuItem(title: "Test Settings", action: #selector(testSettings), keyEquivalent: "")
+        menu.addItem(testSettingsItem)
+        
         menu.addItem(NSMenuItem.separator())
         
         // Settings
+        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettingsDialog), keyEquivalent: ",")
+        settingsItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(settingsItem)
+        
         let openSettingsItem = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilityPreferences), keyEquivalent: "")
         menu.addItem(openSettingsItem)
         

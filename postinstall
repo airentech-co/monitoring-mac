@@ -1,0 +1,54 @@
+#!/bin/bash
+
+# Postinstall script for MonitorClient
+BUNDLE_ID="com.airentech.MonitorClient"
+APP_NAME="MonitorClient"
+
+# Set permissions
+chmod -R 755 "/Applications/$APP_NAME.app"
+chown -R root:wheel "/Applications/$APP_NAME.app"
+
+# Create LaunchAgent plist content
+LAUNCH_AGENT_CONTENT='<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.airentech.MonitorClient</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/MonitorClient.app/Contents/MacOS/MonitorClient</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/MonitorClient.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/MonitorClient.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>'
+
+# Create system-wide LaunchAgent
+SYSTEM_LAUNCH_AGENT="/Library/LaunchAgents/${BUNDLE_ID}.plist"
+echo "$LAUNCH_AGENT_CONTENT" > "$SYSTEM_LAUNCH_AGENT"
+chmod 644 "$SYSTEM_LAUNCH_AGENT"
+chown root:wheel "$SYSTEM_LAUNCH_AGENT"
+
+# Load system LaunchAgent
+launchctl unload "$SYSTEM_LAUNCH_AGENT" 2>/dev/null || true
+launchctl load "$SYSTEM_LAUNCH_AGENT"
+
+# Create user-specific LaunchAgent
+USER_LAUNCH_AGENT="$HOME/Library/LaunchAgents/${BUNDLE_ID}.plist"
+mkdir -p "$(dirname "$USER_LAUNCH_AGENT")"
+echo "$LAUNCH_AGENT_CONTENT" > "$USER_LAUNCH_AGENT"
+chmod 644 "$USER_LAUNCH_AGENT"
+chown "$USER" "$USER_LAUNCH_AGENT"
+launchctl unload "$USER_LAUNCH_AGENT" 2>/dev/null || true
+launchctl load "$USER_LAUNCH_AGENT"
+
+exit 0
